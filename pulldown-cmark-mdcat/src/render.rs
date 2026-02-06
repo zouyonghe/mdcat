@@ -496,10 +496,17 @@ pub fn write_event<'a, W: Write>(
         // Highlighted code blocks
         (Stacked(stack, HighlightBlock(mut attrs)), Text(text)) => {
             for line in LinesWithEndings::from(&text) {
-                let ops = attrs
-                    .parse_state
-                    .parse_line(line, settings.syntax_set)
-                    .expect("syntect parsing shouldn't fail in mdcat");
+                let ops = match attrs.parse_state.parse_line(line, settings.syntax_set) {
+                    Ok(ops) => ops,
+                    Err(error) => {
+                        event!(
+                            Level::WARN,
+                            ?error,
+                            "syntect parsing failed; falling back to unhighlighted output"
+                        );
+                        Vec::new()
+                    }
+                };
                 highlighting::write_as_ansi(
                     writer,
                     HighlightIterator::new(&mut attrs.highlight_state, &ops, line, highlighter()),

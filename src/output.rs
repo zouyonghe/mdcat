@@ -4,7 +4,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::process::*;
 
 use anyhow::{bail, Context, Result};
@@ -15,7 +15,13 @@ pub enum Output {
     /// Standard output
     Stdout(std::io::Stdout),
     /// A pager
-    Pager(Child),
+    Pager(Pager),
+}
+
+/// A running pager process.
+pub struct Pager {
+    child: Child,
+    stdin: ChildStdin,
 }
 
 impl Drop for Output {
@@ -23,7 +29,7 @@ impl Drop for Output {
     ///
     /// When outputting to a pager wait for the pager to exit.
     fn drop(&mut self) {
-        if let Output::Pager(ref mut child) = *self {
+        if let Output::Pager(Pager { child, .. }) = self {
             let _ = child.wait();
         }
     }
@@ -56,8 +62,8 @@ fn pager_from_env() -> Result<Vec<String>> {
             }
         }
     }
-    event!(Level::DEBUG, "Falling back to default pager less -r");
-    Ok(vec!["less".into(), "-r".into()])
+    event!(Level::DEBUG, "Falling back to default pager less -R");
+    Ok(vec!["less".into(), "-R".into()])
 }
 
 impl Output {
@@ -67,7 +73,7 @@ impl Output {
     pub fn writer(&mut self) -> &mut dyn Write {
         match self {
             Output::Stdout(handle) => handle,
-            Output::Pager(child) => child.stdin.as_mut().unwrap(),
+            Output::Pager(Pager { stdin, .. }) => stdin,
         }
     }
 
@@ -80,7 +86,7 @@ impl Output {
     /// unset.  If any of the variables is empty use stdout (assuming that the user
     /// wanted to disabled paging explicitly).
     pub fn new(try_paginate: bool) -> Result<Output> {
-        if try_paginate {
+        if try_paginate && std::io::stdout().is_terminal() {
             match pager_from_env()?.split_first() {
                 None => {
                     event!(
@@ -96,14 +102,18 @@ impl Output {
                         command,
                         args
                     );
-                    Command::new(command)
+                    let mut child = Command::new(command)
                         .args(args)
                         .stdin(Stdio::piped())
                         .spawn()
                         .with_context(|| {
                             format!("Failed to spawn pager {command} with args {args:?}")
-                        })
-                        .map(Output::Pager)
+                        })?;
+                    let stdin = child
+                        .stdin
+                        .take()
+                        .with_context(|| format!("Pager {command} did not provide a stdin pipe"))?;
+                    Ok(Output::Pager(Pager { child, stdin }))
                 }
             }
         } else {

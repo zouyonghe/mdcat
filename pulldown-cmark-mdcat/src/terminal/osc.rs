@@ -20,9 +20,6 @@ pub fn write_osc<W: Write + ?Sized>(writer: &mut W, command: &str) -> Result<()>
     Ok(())
 }
 
-#[derive(Debug, PartialEq, Eq, Copy, Clone)]
-pub struct Osc8Links;
-
 /// Whether the given `url` needs to get an explicit host.
 ///
 /// [OSC 8] links require that `file://` URLs give an explicit hostname, as
@@ -59,7 +56,10 @@ fn url_needs_explicit_host(url: &Url) -> bool {
 /// See <https://git.io/vd4ee#file-uris-and-the-hostname>.
 pub fn set_link_url<W: Write>(writer: &mut W, mut destination: Url, hostname: &str) -> Result<()> {
     if url_needs_explicit_host(&destination) {
-        destination.set_host(Some(hostname)).unwrap();
+        // If the hostname is invalid for a URL host (e.g. contains invalid characters), keep the
+        // original destination and still emit a link.  This is a best-effort feature and should
+        // never crash rendering.
+        let _ = destination.set_host(Some(hostname));
     }
     set_link(writer, destination.as_str())
 }

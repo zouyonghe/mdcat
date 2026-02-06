@@ -48,7 +48,10 @@ fn main() {
             mdcat::args::Command::Mdless { .. } => "mdless",
         };
         let mut command = Args::command();
-        let subcommand = command.find_subcommand_mut(binary).unwrap();
+        let Some(subcommand) = command.find_subcommand_mut(binary) else {
+            eprintln!("Error: failed to find clap subcommand {binary}");
+            std::process::exit(2);
+        };
         generate(shell, subcommand, binary, &mut std::io::stdout());
         std::process::exit(0);
     }
@@ -76,6 +79,14 @@ fn main() {
             terminal_size
         };
 
+        let resource_handler = match create_resource_handler(args.resource_access()) {
+            Ok(handler) => handler,
+            Err(error) => {
+                eprintln!("Error: {error:#}");
+                std::process::exit(128);
+            }
+        };
+
         let exit_code = match Output::new(args.paginate()) {
             Ok(mut output) => {
                 let settings = Settings {
@@ -91,8 +102,6 @@ fn main() {
                     ?settings.terminal_capabilities,
                     "settings"
                 );
-                // TODO: Handle this error properly
-                let resource_handler = create_resource_handler(args.resource_access()).unwrap();
                 args.filenames
                     .iter()
                     .try_fold(0, |code, filename| {

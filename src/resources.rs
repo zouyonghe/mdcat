@@ -24,7 +24,9 @@ pub struct CollectBuffer {
 
 impl Handler for CollectBuffer {
     fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
-        if self.read_limit < (self.buffer.len() + data.len()).try_into().unwrap() {
+        let new_len = self.buffer.len().saturating_add(data.len());
+        let new_len = u64::try_from(new_len).unwrap_or(u64::MAX);
+        if self.read_limit < new_len {
             // Do not handle data and tell curl that we didn't handle it;
             // this will make curl fail with a write error
             Ok(0)
@@ -92,8 +94,11 @@ impl ResourceUrlHandler for CurlResourceHandler {
                 );
                 content_type.parse::<Mime>().ok()
             });
-            let data = easy.get_ref().buffer.clone();
-            easy.get_mut().buffer.clear();
+            // Avoid cloning potentially large buffers: swap the handler buffer into a new Vec while
+            // keeping capacity for reuse.
+            let handler = easy.get_mut();
+            let mut data = Vec::with_capacity(handler.buffer.capacity());
+            std::mem::swap(&mut data, &mut handler.buffer);
             Ok(MimeData { mime_type, data })
         })
     }
